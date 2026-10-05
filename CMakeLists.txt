@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16)
+project(allegro_ecal_standalone CXX)
+find_package(Geant4 REQUIRED)
+add_executable(sim sim.cc)
+target_link_libraries(sim ${Geant4_LIBRARIES})
+target_compile_features(sim PRIVATE cxx_std_17)

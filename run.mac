@@ -1,0 +1,21 @@
+# ./sim run.mac out.root [seed] [backAl_mm]
+/run/initialize
+/gps/particle pi-
+# flat kinetic energy spectrum
+/gps/ene/type Lin
+/gps/ene/gradient 0
+/gps/ene/intercept 1
+/gps/ene/min 5 GeV
+/gps/ene/max 100 GeV
+# beam fired radially from just in front of the cryostat, spread uniformly over one readout cell
+# (cell centre at the calorimeter front: y = 4.4 mm, z = -10.7 mm; cell size ~17.8 x 21.3 mm)
+/gps/pos/type Plane
+/gps/pos/shape Rectangle
+/gps/pos/centre 2100 4.4 -10.7 mm
+/gps/pos/rot1 0 1 0
+/gps/pos/rot2 0 0 1
+/gps/pos/halfx 8.9 mm
+/gps/pos/halfy 10.7 mm
+/gps/direction 1 0 0
+/run/printProgress 100
+/run/beamOn 1000

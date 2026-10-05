@@ -1,0 +1,6 @@
+build/
+*.root
+*.npy*
+plots*/
+__pycache__/
+calib.json
