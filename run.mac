@@ -1,4 +1,4 @@
-# ./sim run.mac out.root [seed] [backAl_mm]
+# ./sim run.mac out.root [seed] [geometry.txt]
 /run/initialize
 /gps/particle pi-
 # flat kinetic energy spectrum

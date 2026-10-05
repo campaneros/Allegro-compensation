@@ -4,10 +4,12 @@
   python ntuple.py calib calib.json e_raw.root     # optional cross-check: per-layer calibration from an electron run"""
 import argparse, json, numpy as np, awkward as ak, uproot
 
-# same constants as sim.cc (k4geo ALLEGRO_o1_v03)
-RMIN, ALPHA, DPHI = 2172.8, np.radians(50.18), 2 * np.pi / 1536
-LAYLEN = 10 * np.array([2.33596, 4.75685, 4.89843, 5.04000, 5.20989, 5.36562, 5.54966, 5.73371, 5.94607, 6.15843, 6.39909])
-THGRID, THOFF, MERGE_TH = 0.009817477 / 4, 0.5902785, np.array([4, 1, 4, 4, 4, 4, 4, 4, 4, 4, 4])
+# geometry: the same file ./sim reads (xml2geo.py output)
+GEO = {l.split()[0]: l.split("#")[0].split()[1:] for l in open("geometry.txt") if l.strip() and not l.startswith("material")}
+g = lambda k: np.array(GEO[k], float)
+RMIN, RMAX, ALPHA, DPHI = g("rmin")[0], g("rmax")[0], g("angle")[0], 2 * np.pi / g("nplanes")[0]
+LAYLEN, THGRID, THOFF = g("layers"), g("theta_grid")[0], g("theta_offset")[0]
+MERGE_TH, MERGE_MOD = g("merge_theta"), g("merge_module")
 # default EM-scale calibration: per-layer sampling fractions of the full ALLEGRO simulation,
 # from FCC-config FCCee/FullSim/ALLEGRO/ALLEGRO_o1_v03/run_digi_reco.py (not stored in k4geo)
 SF = [0.3790943904011486, 0.1355600584387894, 0.14628210607758893, 0.15274136994224854, 0.15817255837886351, 0.16290355087527258,
@@ -21,17 +23,17 @@ def lut(table, idx):   # per-layer lookup on a jagged index array
 
 def calib(inp):
     """inverse sampling fraction per layer: all deposits / LAr deposits, summed over the electron sample"""
-    tot, act = np.zeros(11), np.zeros(11)
+    tot, act = np.zeros(len(LAYLEN)), np.zeros(len(LAYLEN))
     for a in uproot.iterate([i + ":events" for i in inp], ["Elayer_all", "cell_layer", "cell_E"]):
         tot += ak.to_numpy(ak.sum(a["Elayer_all"], axis=0))
-        act += np.bincount(ak.to_numpy(ak.flatten(a["cell_layer"])), ak.to_numpy(ak.flatten(a["cell_E"])), 11)
+        act += np.bincount(ak.to_numpy(ak.flatten(a["cell_layer"])), ak.to_numpy(ak.flatten(a["cell_E"])), len(LAYLEN))
     return (tot / act).tolist()
 
 def convert(a, c, thr):
     lay = a["cell_layer"]
     E = a["cell_E"] * lut(c, lay) * 1e-3                           # GeV, EM scale
-    r, phi = lut(RLAY, lay), (2 * a["cell_module"] + 0.5) * DPHI + lut(DLAY, lay)
-    theta = THOFF + (a["cell_theta"] + (lut(MERGE_TH, lay) - 1) / 2) * THGRID
+    r, phi = lut(RLAY, lay), (a["cell_module"] + (lut(MERGE_MOD, lay) - 1) / 2) * DPHI + lut(DLAY, lay)
+    theta = THOFF + (a["cell_theta"] + (lut(MERGE_TH, lay) - 1) / 2) * THGRID   # cell_* = first bin of the merged group
     x, y, z = r * np.cos(phi), r * np.sin(phi), r / np.tan(theta)
     k = E > thr
     E, x, y, z = E[k], x[k], y[k], z[k]
