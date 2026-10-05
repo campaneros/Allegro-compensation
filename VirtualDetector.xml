@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lccdd>
+  <!-- Virtual detector: thin air shell in the gap between ECAL cryostat (r < 2770 mm) and HCAL (r > 2800 mm).
+       With Geant4EscapeCounter (see run_sim.sh) every track entering it is recorded (total energy + momentum) and killed. -->
+  <readouts>
+    <readout name="VD"><id>system:5,layer:5</id></readout>
+  </readouts>
+  <detectors>
+    <detector id="30" name="VD" type="SimpleCylinder_o1_v02" sensitive="true" readout="VD">
+      <sensitive type="tracker"/>
+      <dimensions rmin="BarECal_rmax+5*mm" rmax="BarECal_rmax+10*mm" dz="BarECal_dz" z_offset="0" material="Air" phi0="0" deltaphi="360*deg"/>
+      <layers><layer thickness="5*mm" repeat="1"/></layers>
+    </detector>
+  </detectors>
+</lccdd>
