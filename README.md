@@ -18,7 +18,7 @@ dimensions, plate structure, layers, readout segmentation and materials to `geom
   `use_cryo_back 0` in `geometry.txt` to remove the back wall and put the virtual detector right behind the liquid.
 - Not modelled: cryostat side walls at the z ends, magnetic field, everything outside the ECAL barrel.
 - Cells: gap between two absorbers = module, slices along the electrode = layers, projective theta bins, merged as in the xml.
-- Beam (`run.mac`): fired radially from just inside the front cryostat, spread over one readout cell.
+- Beam (`run.mac`): fired radially from inside the bore, 5 cm in front of the cryostat wall, spread over one readout cell.
   Anything leaving the calorimeter is counted and killed; the outer surface is the virtual detector.
 
 ## Run
