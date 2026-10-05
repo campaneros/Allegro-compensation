@@ -19,7 +19,9 @@ theta_offset 0.5902785
 layers 23.3596 47.5685 48.984300000000005 50.4 52.0989 53.6562 55.4966 57.33710000000001 59.460699999999996 61.5843 63.9909
 merge_theta 4 1 4 4 4 4 4 4 4 4 4
 merge_module 2 2 2 2 2 2 2 2 2 2 2
-use_cryo_back 1   # 1: virtual detector behind the back cryostat wall (incl. solenoid); 0: wall removed, VD right behind the LAr
+sector_half_deg 30   # half width of the simulated sector in azimuth; 180 = whole ring
+z_half 1500          # half length of the simulated sector along z [mm]
+use_cryo_back 0      # 0: virtual detector right behind the liquid, as in the paper; 1: behind the back cryostat wall (incl. solenoid)
 mat_active LAr
 mat_core0 LAr
 mat_core Lead

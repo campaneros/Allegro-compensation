@@ -52,7 +52,10 @@ for k, v in out.items(): print(k, repr(v))
 print("layers", *layers)
 print("merge_theta", seg.get("mergedCells_Theta"))
 print("merge_module", seg.get("mergedModules"))
-print("use_cryo_back 1   # 1: virtual detector behind the back cryostat wall (incl. solenoid); 0: wall removed, VD right behind the LAr")
+# choices for the test-beam module (not from the xml)
+print("sector_half_deg 30   # half width of the simulated sector in azimuth; 180 = whole ring")
+print("z_half 1500          # half length of the simulated sector along z [mm]")
+print("use_cryo_back 0      # 0: virtual detector right behind the liquid, as in the paper; 1: behind the back cryostat wall (incl. solenoid)")
 for role, name in mats.items(): print("mat_" + role, name)
 for name in sorted(set(mats.values())):
     m = defs[name]

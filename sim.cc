@@ -1,6 +1,6 @@
-// Standalone Geant4 simulation of the ALLEGRO ECAL barrel used as a test-beam module:
-// a beam is fired radially into the calorimeter, everything leaving it is counted and killed;
-// the outer surface is the "virtual detector" of arXiv:2606.05111.
+// Standalone Geant4 simulation of a module (sector) of the ALLEGRO ECAL barrel in a test-beam setup:
+// a beam is fired radially into the module, everything leaving it is counted and killed;
+// the back surface is the "virtual detector" of arXiv:2606.05111. No magnetic field.
 // The whole geometry (dimensions, plate structure, materials, layers, readout segmentation) is read from
 // geometry.txt, produced by xml2geo.py from the k4geo compact files. The construction follows
 // k4geo detector/calorimeter/ECalBarrel_NobleLiquid_InclinedTrapezoids_o1_v03_geo.cpp.
@@ -115,7 +115,9 @@ class Det : public G4VUserDetectorConstruction {
   }
 public:
   G4VPhysicalVolume* Construct() override {
-    double dz = num("dz") * mm, cdz = num("cryo_dz") * mm;
+    // simulated module: a sector of the barrel, +-halfPhi in azimuth and +-dz along the beam line
+    double halfPhi = std::min(num("sector_half_deg"), 180.) * deg;
+    double dz = std::min(num("z_half"), num("dz")) * mm, cdz = dz;
     double c1 = num("cryo_rmin1") * mm, c2 = num("cryo_rmin2") * mm, C1 = num("cryo_rmax1") * mm, C2 = num("cryo_rmax2") * mm;
     double tIn = num("t_inner") * mm, tGlue = num("t_glue") * mm, tOut = num("t_outer") * mm, tRO = num("t_readout") * mm;
 
@@ -123,7 +125,7 @@ public:
                                   G4NistManager::Instance()->FindOrBuildMaterial("G4_Galactic"), "World");
     auto world = new G4PVPlacement(nullptr, {}, worldLV, "World", nullptr, false, 0);
     auto tubs = [&](const char* n, double r0, double r1, double hz, G4Material* m) {
-      auto lv = new G4LogicalVolume(new G4Tubs(n, r0, r1, hz, 0, twopi), m, n);
+      auto lv = new G4LogicalVolume(new G4Tubs(n, r0, r1, hz, -halfPhi, 2 * halfPhi), m, n);
       new G4PVPlacement(nullptr, {}, lv, n, worldLV, false, 0, true);
       return lv;
     };
@@ -146,13 +148,17 @@ public:
     auto roLV = box("Readout", tRO, Lpl, mat("readout"));
 
     // plates start at Rmin at azimuth phi and run for a length Lpl at an angle alpha to the radial direction
-    for (int i = 0; i < nPlanes; ++i)
+    // keep only the plates fully inside the sector (a plate sweeps dMax in azimuth); the whole ring if halfPhi = 180 deg
+    double dMax = std::asin(Lpl * std::sin(alpha) / Rmax), margin = 0.3 * deg;
+    bool ring = halfPhi >= 180 * deg;
+    int i0 = ring ? 0 : std::ceil((-halfPhi + margin) / dPhi), i1 = ring ? nPlanes - 1 : std::floor((halfPhi - dMax - margin) / dPhi);
+    for (int i = i0; i <= i1; ++i)
       for (int isAbs = 0; isAbs < 2; ++isAbs) {
         double phi = (i + 0.5 * isAbs) * dPhi;
         G4ThreeVector u(std::cos(phi + alpha), std::sin(phi + alpha), 0), z(0, 0, 1);
         G4RotationMatrix rot(z.cross(u), z, u);   // local x = plate normal, y = barrel z, z = along plate
         G4ThreeVector c = Rmin * G4ThreeVector(std::cos(phi), std::sin(phi), 0) + 0.5 * Lpl * u;
-        new G4PVPlacement(G4Transform3D(rot, c), isAbs ? absLV : roLV, isAbs ? "Outer" : "Readout", bathLV, false, i, i < 2);
+        new G4PVPlacement(G4Transform3D(rot, c), isAbs ? absLV : roLV, isAbs ? "Outer" : "Readout", bathLV, false, i, i < i0 + 2);
       }
     return world;
   }

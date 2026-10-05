@@ -1,10 +1,10 @@
 # allegro-compensation-standalone
 
-Software compensation of pion showers (arXiv:2606.05111, Figs. 4-12) on the ALLEGRO ECAL barrel used as a test-beam
-module, simulated with standalone Geant4 (no key4hep).
+Software compensation of pion showers (arXiv:2606.05111, Figs. 4-12) on a module of the ALLEGRO ECAL barrel in a
+test-beam setup, simulated with standalone Geant4 (no key4hep).
 
 ## Geometry
-The full ECAL barrel of ALLEGRO, read from the k4geo compact files and built as the k4geo driver
+A module of the ALLEGRO ECAL barrel, read from the k4geo compact files and built as the k4geo driver
 `ECalBarrel_NobleLiquid_InclinedTrapezoids_o1_v03_geo.cpp` does:
 
     python xml2geo.py /path/to/k4geo/FCCee/ALLEGRO/compact/ALLEGRO_o1_v03 > geometry.txt
@@ -13,10 +13,11 @@ The full ECAL barrel of ALLEGRO, read from the k4geo compact files and built as 
 dimensions, plate structure, layers, readout segmentation and materials to `geometry.txt`, which both `sim` and
 `ntuple.py` read. The committed `geometry.txt` comes from k4geo commit e1ba7bc.
 
-- Complete ring (all 1536 planes) and full length along z: no lateral leakage in the calorimeter itself.
-- Front cryostat wall, liquid bath, back cryostat wall (which includes the solenoid thickness). Set
-  `use_cryo_back 0` in `geometry.txt` to remove the back wall and put the virtual detector right behind the liquid.
-- Not modelled: cryostat side walls at the z ends, magnetic field, everything outside the ECAL barrel.
+- Module = sector of the barrel, by default +-30 deg in azimuth (about +-1.2 m) and +-1.5 m along z, so that
+  lateral leakage is negligible: check it with `Eside`. `sector_half_deg`, `z_half` in `geometry.txt` change it.
+- Front cryostat wall and liquid bath; the virtual detector is right behind the liquid, as in the paper.
+  `use_cryo_back 1` adds the back cryostat wall (which includes the solenoid thickness) in front of it.
+- No magnetic field, nothing outside the ECAL barrel.
 - Cells: gap between two absorbers = module, slices along the electrode = layers, projective theta bins, merged as in the xml.
 - Beam (`run.mac`): fired radially from inside the bore, 5 cm in front of the cryostat wall, spread over one readout cell.
   Anything leaving the calorimeter is counted and killed; the outer surface is the virtual detector.
@@ -38,6 +39,6 @@ that this module reproduces them: `./build/sim run_e.mac e_raw.root 1 && python 
 
 ## Definitions
 - `Ebeam`: total energy of the generated particle. `Evd`: energy leaving through the back face
-  (kinetic for baryons, total otherwise). `Etrue = Ebeam - Evd`. `Eside`: energy leaving backwards into the bore or through the z ends.
+  (kinetic for baryons, total otherwise). `Etrue = Ebeam - Evd`. `Eside`: energy leaving through the sides or backwards.
 - `Rend`: radius where the primary ended (first inelastic interaction, or exit).
 - hits: LAr deposits per cell, calibrated per layer to the EM scale, threshold 3 MeV (`--thr`).
