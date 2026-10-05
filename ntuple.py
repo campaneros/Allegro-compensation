@@ -4,29 +4,30 @@
   python ntuple.py calib calib.json e_raw.root     # optional cross-check: per-layer calibration from an electron run"""
 import argparse, json, numpy as np, awkward as ak, uproot
 
-# geometry: the same file ./sim reads (xml2geo.py output)
-GEO = {l.split()[0]: l.split("#")[0].split()[1:] for l in open("geometry.txt") if l.strip() and not l.startswith("material")}
-g = lambda k: np.array(GEO[k], float)
-RMIN, RMAX, ALPHA, DPHI = g("rmin")[0], g("rmax")[0], g("angle")[0], 2 * np.pi / g("nplanes")[0]
-LAYLEN, THGRID, THOFF = g("layers"), g("theta_grid")[0], g("theta_offset")[0]
-MERGE_TH, MERGE_MOD = g("merge_theta"), g("merge_module")
 # default EM-scale calibration: per-layer sampling fractions of the full ALLEGRO simulation,
 # from FCC-config FCCee/FullSim/ALLEGRO/ALLEGRO_o1_v03/run_digi_reco.py (not stored in k4geo)
 SF = [0.3790943904011486, 0.1355600584387894, 0.14628210607758893, 0.15274136994224854, 0.15817255837886351, 0.16290355087527258,
       0.1674201708055751, 0.1715846423182708, 0.17558662106635545, 0.18002243792463576, 0.18288329976007917]
-SMID = np.cumsum(LAYLEN) - LAYLEN / 2                                   # layer centre along the electrode [mm]
-RLAY = np.sqrt(RMIN**2 + SMID**2 + 2 * RMIN * SMID * np.cos(ALPHA))     # ... and its radius
-DLAY = np.arcsin(SMID * np.sin(ALPHA) / RLAY)                           # azimuth shift of the inclined electrode there
+def load_geo(fn):
+    """geometry actually used by ./sim, stored by it in the 'geo' tree of every raw file"""
+    global RMIN, DPHI, MERGE_TH, MERGE_MOD, THGRID, THOFF, NLAY, RLAY, DLAY
+    g = uproot.open(fn)["geo"].arrays(library="np")
+    RMIN, alpha, DPHI = g["rmin"][0], g["angle"][0], 2 * np.pi / g["nplanes"][0]
+    laylen, MERGE_TH, MERGE_MOD = g["layers"][0], g["merge_theta"][0], g["merge_module"][0]
+    THGRID, THOFF, NLAY = g["theta_grid"][0], g["theta_offset"][0], len(laylen)
+    smid = np.cumsum(laylen) - laylen / 2                               # layer centre along the electrode [mm]
+    RLAY = np.sqrt(RMIN**2 + smid**2 + 2 * RMIN * smid * np.cos(alpha))  # ... and its radius
+    DLAY = np.arcsin(smid * np.sin(alpha) / RLAY)                       # azimuth shift of the inclined electrode there
 
 def lut(table, idx):   # per-layer lookup on a jagged index array
     return ak.unflatten(np.asarray(table)[ak.to_numpy(ak.flatten(idx))], ak.num(idx))
 
 def calib(inp):
     """inverse sampling fraction per layer: all deposits / LAr deposits, summed over the electron sample"""
-    tot, act = np.zeros(len(LAYLEN)), np.zeros(len(LAYLEN))
+    tot, act = np.zeros(NLAY), np.zeros(NLAY)
     for a in uproot.iterate([i + ":events" for i in inp], ["Elayer_all", "cell_layer", "cell_E"]):
         tot += ak.to_numpy(ak.sum(a["Elayer_all"], axis=0))
-        act += np.bincount(ak.to_numpy(ak.flatten(a["cell_layer"])), ak.to_numpy(ak.flatten(a["cell_E"])), len(LAYLEN))
+        act += np.bincount(ak.to_numpy(ak.flatten(a["cell_layer"])), ak.to_numpy(ak.flatten(a["cell_E"])), NLAY)
     return (tot / act).tolist()
 
 def convert(a, c, thr):
@@ -50,6 +51,7 @@ if __name__ == "__main__":
     p.add_argument("--thr", type=float, default=0.003, help="cell threshold [GeV, EM scale]; tune to the real noise")
     p.add_argument("--calib", help="json from 'calib' mode, replaces the default sampling fractions")
     a = p.parse_args()
+    load_geo(a.args[1])
     if a.mode == "calib":
         c = calib(a.args[1:]); json.dump(c, open(a.args[0], "w"))
         print("1/SF per layer, this module:", np.round(c, 3)); print("1/SF per layer, FCC-config: ", np.round(1 / np.array(SF), 3))

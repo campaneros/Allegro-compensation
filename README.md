@@ -4,19 +4,18 @@ Software compensation of pion showers (arXiv:2606.05111, Figs. 4-12) on a module
 test-beam setup, simulated with standalone Geant4 (no key4hep).
 
 ## Geometry
-A module of the ALLEGRO ECAL barrel, read from the k4geo compact files and built as the k4geo driver
-`ECalBarrel_NobleLiquid_InclinedTrapezoids_o1_v03_geo.cpp` does:
+A module of the ALLEGRO ECAL barrel. `sim` reads the k4geo compact files directly at start-up
+(`DectDimensions.xml`, `ECalBarrel_thetamodulemerged.xml`, `elements.xml`, `materials.xml`; parser in
+`allegro_xml.hh`, expressions evaluated with the CLHEP evaluator) and builds the volumes as the k4geo driver
+`ECalBarrel_NobleLiquid_InclinedTrapezoids_o1_v03_geo.cpp` does. No calorimeter number is written in this repository.
 
-    python xml2geo.py /path/to/k4geo/FCCee/ALLEGRO/compact/ALLEGRO_o1_v03 > geometry.txt
-
-`xml2geo.py` evaluates the constants of `DectDimensions.xml` and `ECalBarrel_thetamodulemerged.xml` and writes
-dimensions, plate structure, layers, readout segmentation and materials to `geometry.txt`, which both `sim` and
-`ntuple.py` read. The committed `geometry.txt` comes from k4geo commit e1ba7bc.
+    git clone https://github.com/key4hep/k4geo        # in this directory, or pass the xml directory as 4th argument
+    ./build/test_xml k4geo/FCCee/ALLEGRO/compact/ALLEGRO_o1_v03    # prints what was read from the xml
 
 - Module = sector of the barrel, by default +-30 deg in azimuth (about +-1.2 m) and +-1.5 m along z, so that
-  lateral leakage is negligible: check it with `Eside`. `sector_half_deg`, `z_half` in `geometry.txt` change it.
+  lateral leakage is negligible: check it with `Eside`. `/module/halfPhiDeg`, `/module/halfZ` in the macro change it.
 - Front cryostat wall and liquid bath; the virtual detector is right behind the liquid, as in the paper.
-  `use_cryo_back 1` adds the back cryostat wall (which includes the solenoid thickness) in front of it.
+  `/module/cryoBack true` adds the back cryostat wall (which includes the solenoid thickness) in front of it.
 - No magnetic field, nothing outside the ECAL barrel.
 - Cells: gap between two absorbers = module, slices along the electrode = layers, projective theta bins, merged as in the xml.
 - Beam (`run.mac`): fired radially from inside the bore, 5 cm in front of the cryostat wall, spread over one readout cell.
@@ -34,7 +33,8 @@ Calibration: by default the per-layer sampling fractions of the full ALLEGRO sim
 that this module reproduces them: `./build/sim run_e.mac e_raw.root 1 && python ntuple.py calib calib.json e_raw.root`
 (prints both sets; `--calib calib.json` in `make` uses the module's own).
 
-4th argument of `sim`: geometry file (default `geometry.txt` in the current directory).
+4th argument of `sim`: directory of the compact files (default `k4geo/FCCee/ALLEGRO/compact/ALLEGRO_o1_v03`).
+Each raw file carries the geometry used in a `geo` tree, which `ntuple.py` reads to place the cells.
 `PHYSLIST=FTFP_BERT ./build/sim ...` changes the physics list (default QGSP_BERT).
 
 ## Definitions

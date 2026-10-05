@@ -1,12 +1,15 @@
 // Standalone Geant4 simulation of a module (sector) of the ALLEGRO ECAL barrel in a test-beam setup:
 // a beam is fired radially into the module, everything leaving it is counted and killed;
 // the back surface is the "virtual detector" of arXiv:2606.05111. No magnetic field.
-// The whole geometry (dimensions, plate structure, materials, layers, readout segmentation) is read from
-// geometry.txt, produced by xml2geo.py from the k4geo compact files. The construction follows
-// k4geo detector/calorimeter/ECalBarrel_NobleLiquid_InclinedTrapezoids_o1_v03_geo.cpp.
+// The geometry (dimensions, plate structure, materials, layers, readout segmentation) is read at start-up directly
+// from the k4geo compact files (allegro_xml.hh) and built as the k4geo driver
+// detector/calorimeter/ECalBarrel_NobleLiquid_InclinedTrapezoids_o1_v03_geo.cpp does.
 //
-//   ./sim run.mac out.root [seed=1] [geometry.txt]
+//   ./sim run.mac out.root [seed=1] [xmlDir=k4geo/FCCee/ALLEGRO/compact/ALLEGRO_o1_v03]
+// Size of the simulated module: /module/... commands in the macro, before /run/initialize.
 // Physics list: env PHYSLIST (default QGSP_BERT, as in the paper).
+#include "allegro_xml.hh"
+#include <G4GenericMessenger.hh>
 #include <G4Box.hh>
 #include <G4Tubs.hh>
 #include <G4LogicalVolume.hh>
@@ -40,26 +43,12 @@
 #include <vector>
 
 namespace {
-std::map<std::string, std::vector<std::string>> kv, matDef;   // geometry.txt
-double num(const std::string& k, size_t i = 0) {
-  if (!kv.count(k) || kv[k].size() <= i) throw std::runtime_error("geometry file: missing " + k);
-  return std::stod(kv[k][i]);
-}
-void readGeo(const std::string& fn) {
-  std::ifstream f(fn);
-  if (!f) throw std::runtime_error("cannot open " + fn + " (create it with xml2geo.py)");
-  for (std::string line; std::getline(f, line);) {
-    std::istringstream is(line.substr(0, line.find('#')));
-    std::string key, tok;
-    if (!(is >> key)) continue;
-    bool isMat = key == "material";
-    if (isMat) is >> key;
-    auto& v = isMat ? matDef[key] : kv[key];
-    while (is >> tok) v.push_back(tok);
-  }
-}
+const AllegroXml* X;   // the k4geo description
+// simulated module (not from the xml), set with /module/... in the macro
+double halfPhiDeg = 30, halfZmm = 1500;   // sector half width in azimuth (180 = whole ring) and half length along z
+bool cryoBack = false;                    // false: virtual detector right behind the liquid, as in the paper
 
-// geometry, filled in main() from the file (mm, rad)
+// derived quantities, filled in main() (mm, rad)
 double Rmin, Rmax, alpha, dPhi, Lpl, thGrid, thOff, Rback;
 int nPlanes, nLay;
 std::vector<double> layEnd;            // cumulative layer lengths along the electrode
@@ -97,29 +86,33 @@ struct Ev {
   std::map<int, double> cells;   // key: layer | module<<4 | theta<<16  -> LAr energy
 } ev;
 std::vector<int> cLay, cMod, cThe;
-std::vector<double> cE, vLayAll;
+std::vector<double> cE, vLayAll, gLayers, gMergeTheta, gMergeModule;
 
 class Det : public G4VUserDetectorConstruction {
+  G4GenericMessenger msg{this, "/module/", "simulated module"};
   G4Material* mat(const std::string& role) {
-    auto name = kv.at("mat_" + role).at(0);
+    auto name = X->role.at(role);
     if (auto m = G4Material::GetMaterial(name, false)) return m;
-    auto& t = matDef.at(name);   // density, natoms|fraction, (element, amount)...
-    int n = (t.size() - 2) / 2;
-    auto m = new G4Material(name, std::stod(t[0]) * g / cm3, n);
-    for (int i = 0; i < n; ++i) {
-      auto el = G4NistManager::Instance()->FindOrBuildElement(t[2 + 2 * i]);
-      if (t[1] == "natoms") m->AddElement(el, std::stoi(t[3 + 2 * i]));
-      else m->AddElement(el, std::stod(t[3 + 2 * i]));
+    auto& d = X->mat.at(name);
+    auto m = new G4Material(name, d.density * g / cm3, d.comp.size());
+    for (auto& [el, n] : d.comp) {
+      auto e = G4NistManager::Instance()->FindOrBuildElement(el);
+      if (d.fractions) m->AddElement(e, n);
+      else m->AddElement(e, int(std::lround(n)));
     }
     return m;
   }
 public:
+  Det() {
+    msg.DeclareProperty("halfPhiDeg", halfPhiDeg, "half width of the sector in azimuth [deg]; 180 = whole ring");
+    msg.DeclareProperty("halfZ", halfZmm, "half length of the sector along z [mm]");
+    msg.DeclareProperty("cryoBack", cryoBack, "keep the back cryostat wall in front of the virtual detector");
+  }
   G4VPhysicalVolume* Construct() override {
-    // simulated module: a sector of the barrel, +-halfPhi in azimuth and +-dz along the beam line
-    double halfPhi = std::min(num("sector_half_deg"), 180.) * deg;
-    double dz = std::min(num("z_half"), num("dz")) * mm, cdz = dz;
-    double c1 = num("cryo_rmin1") * mm, c2 = num("cryo_rmin2") * mm, C1 = num("cryo_rmax1") * mm, C2 = num("cryo_rmax2") * mm;
-    double tIn = num("t_inner") * mm, tGlue = num("t_glue") * mm, tOut = num("t_outer") * mm, tRO = num("t_readout") * mm;
+    double halfPhi = std::min(halfPhiDeg, 180.) * deg;
+    double dz = std::min(halfZmm, X->dz) * mm, cdz = dz;
+    double c1 = X->cryoRmin1, c2 = X->cryoRmin2, C1 = X->cryoRmax1, C2 = X->cryoRmax2;
+    double tIn = X->tInner, tGlue = X->tGlue, tOut = X->tOuter, tRO = X->tReadout;
 
     worldLV = new G4LogicalVolume(new G4Box("World", C2 + 1 * m, C2 + 1 * m, cdz + 1 * m),
                                   G4NistManager::Instance()->FindOrBuildMaterial("G4_Galactic"), "World");
@@ -131,9 +124,8 @@ public:
     };
     tubs("CryoFront", c1, c2, cdz, mat("cryo"));
     bathLV = tubs("Bath", c2, C1, dz, mat("active"));   // services + bath + gaps: all liquid
-    bool back = num("use_cryo_back") != 0;
-    if (back) tubs("CryoBack", C1, C2, cdz, mat("cryo"));
-    Rback = back ? C2 : C1;
+    if (cryoBack) tubs("CryoBack", C1, C2, cdz, mat("cryo"));
+    Rback = cryoBack ? C2 : C1;
 
     // absorber: inner core (a different material in layer 0), glue and outer skin on both faces
     auto box = [&](const char* n, double t, double len, G4Material* m) {
@@ -183,9 +175,21 @@ public:
     am->CreateNtupleIColumn("cell_theta", cThe);      // first theta bin of the merged group
     am->CreateNtupleDColumn("cell_E", cE);            // LAr deposit, uncalibrated
     am->FinishNtuple();
+    am->CreateNtuple("geo", "geometry used, one row");   // read by ntuple.py to place the cells
+    for (auto n : {"rmin", "rmax", "angle", "nplanes", "theta_grid", "theta_offset", "half_phi_deg", "half_z", "cryo_back"}) am->CreateNtupleDColumn(n);
+    am->CreateNtupleDColumn("layers", gLayers);
+    am->CreateNtupleDColumn("merge_theta", gMergeTheta);
+    am->CreateNtupleDColumn("merge_module", gMergeModule);
+    am->FinishNtuple();
   }
   void BeginOfRunAction(const G4Run*) override { G4AnalysisManager::Instance()->OpenFile(out); }
-  void EndOfRunAction(const G4Run*) override { auto am = G4AnalysisManager::Instance(); am->Write(); am->CloseFile(); }
+  void EndOfRunAction(const G4Run*) override {
+    auto am = G4AnalysisManager::Instance();
+    int c = 0;
+    for (double v : {Rmin, Rmax, alpha, double(nPlanes), thGrid, thOff, halfPhiDeg, halfZmm, double(cryoBack)}) am->FillNtupleDColumn(1, c++, v);
+    am->AddNtupleRow(1);
+    am->Write(); am->CloseFile();
+  }
 };
 
 class Evt : public G4UserEventAction {
@@ -242,20 +246,16 @@ public:
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 3) { G4cerr << "usage: sim run.mac out.root [seed=1] [geometry.txt]" << G4endl; return 1; }
+  if (argc < 3) { G4cerr << "usage: sim run.mac out.root [seed=1] [xmlDir]" << G4endl; return 1; }
   G4Random::setTheSeed(argc > 3 ? std::atol(argv[3]) : 1);
-  readGeo(argc > 4 ? argv[4] : "geometry.txt");
-  Rmin = num("rmin") * mm; Rmax = num("rmax") * mm; alpha = num("angle");
-  nPlanes = int(num("nplanes")); dPhi = twopi / nPlanes;
+  X = new AllegroXml(argc > 4 ? argv[4] : "k4geo/FCCee/ALLEGRO/compact/ALLEGRO_o1_v03");
+  Rmin = X->rmin; Rmax = X->rmax; alpha = X->angle; nPlanes = X->nPlanes; dPhi = twopi / nPlanes;
   Lpl = -Rmin * std::cos(alpha) + std::sqrt(Rmax * Rmax - std::pow(Rmin * std::sin(alpha), 2));   // planeLength
-  thGrid = num("theta_grid"); thOff = num("theta_offset");
-  nLay = kv.at("layers").size();
-  for (int l = 0; l < nLay; ++l) {
-    layEnd.push_back((l ? layEnd[l - 1] : 0) + num("layers", l) * mm);
-    mergeTheta.push_back(int(num("merge_theta", l)));
-    mergeModule.push_back(int(num("merge_module", l)));
-  }
-  if (std::abs(layEnd.back() - Lpl) > 0.5 * mm || nLay > 16 || nPlanes > 4096) throw std::runtime_error("geometry file: inconsistent layers / planes");
+  thGrid = X->thetaGrid; thOff = X->thetaOffset;
+  nLay = X->layers.size(); mergeTheta = X->mergeTheta; mergeModule = X->mergeModule;
+  for (int l = 0; l < nLay; ++l) layEnd.push_back((l ? layEnd[l - 1] : 0) + X->layers[l]);
+  gLayers = X->layers; gMergeTheta.assign(mergeTheta.begin(), mergeTheta.end()); gMergeModule.assign(mergeModule.begin(), mergeModule.end());
+  if (std::abs(layEnd.back() - Lpl) > 0.5 * mm || nLay > 16 || nPlanes > 4096) throw std::runtime_error("inconsistent layers / planes in the xml");
 
   // ponytail: sequential run manager, event data in file-scope globals; parallelise with one job per seed
   auto rm = new G4RunManager;

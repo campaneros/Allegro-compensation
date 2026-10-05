@@ -1,4 +1,9 @@
-# ./sim run.mac out.root [seed] [geometry.txt]
+# ./sim run.mac out.root [seed] [xmlDir]
+# simulated module (these are the defaults): sector half width in azimuth, half length along z,
+# and whether the back cryostat wall (incl. solenoid) stays in front of the virtual detector
+/module/halfPhiDeg 30
+/module/halfZ 1500
+/module/cryoBack false
 /run/initialize
 /gps/particle pi-
 # flat kinetic energy spectrum
