@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Raw Geant4 output of ./sim -> flat 'events' tree used by compensation.py and gnn.py.
-  python ntuple.py calib calib.json e_raw_*.root              # per-layer EM-scale calibration from an electron run
-  python ntuple.py make  out.root calib.json pi_raw_*.root    # calibrated hits in the shower frame  [--thr GeV]"""
+  python ntuple.py make  out.root pi_raw_*.root [--calib calib.json] [--thr GeV]   # calibrated hits in the shower frame
+  python ntuple.py calib calib.json e_raw.root     # optional cross-check: per-layer calibration from an electron run"""
 import argparse, json, numpy as np, awkward as ak, uproot
 
 # same constants as sim.cc (k4geo ALLEGRO_o1_v03)
 RMIN, ALPHA, DPHI = 2172.8, np.radians(50.18), 2 * np.pi / 1536
 LAYLEN = 10 * np.array([2.33596, 4.75685, 4.89843, 5.04000, 5.20989, 5.36562, 5.54966, 5.73371, 5.94607, 6.15843, 6.39909])
 THGRID, THOFF, MERGE_TH = 0.009817477 / 4, 0.5902785, np.array([4, 1, 4, 4, 4, 4, 4, 4, 4, 4, 4])
+# default EM-scale calibration: per-layer sampling fractions of the full ALLEGRO simulation,
+# from FCC-config FCCee/FullSim/ALLEGRO/ALLEGRO_o1_v03/run_digi_reco.py (not stored in k4geo)
+SF = [0.3790943904011486, 0.1355600584387894, 0.14628210607758893, 0.15274136994224854, 0.15817255837886351, 0.16290355087527258,
+      0.1674201708055751, 0.1715846423182708, 0.17558662106635545, 0.18002243792463576, 0.18288329976007917]
 SMID = np.cumsum(LAYLEN) - LAYLEN / 2                                   # layer centre along the electrode [mm]
 RLAY = np.sqrt(RMIN**2 + SMID**2 + 2 * RMIN * SMID * np.cos(ALPHA))     # ... and its radius
 DLAY = np.arcsin(SMID * np.sin(ALPHA) / RLAY)                           # azimuth shift of the inclined electrode there
@@ -42,12 +46,14 @@ def convert(a, c, thr):
 if __name__ == "__main__":
     p = argparse.ArgumentParser(); p.add_argument("mode", choices=["calib", "make"]); p.add_argument("args", nargs="+")
     p.add_argument("--thr", type=float, default=0.003, help="cell threshold [GeV, EM scale]; tune to the real noise")
+    p.add_argument("--calib", help="json from 'calib' mode, replaces the default sampling fractions")
     a = p.parse_args()
     if a.mode == "calib":
-        c = calib(a.args[1:]); json.dump(c, open(a.args[0], "w")); print("1/SF per layer:", np.round(c, 3))
+        c = calib(a.args[1:]); json.dump(c, open(a.args[0], "w"))
+        print("1/SF per layer, this module:", np.round(c, 3)); print("1/SF per layer, FCC-config: ", np.round(1 / np.array(SF), 3))
     else:
-        c = json.load(open(a.args[1]))
+        c = json.load(open(a.calib)) if a.calib else (1 / np.array(SF)).tolist()
         with uproot.recreate(a.args[0]) as f:
-            for arr in uproot.iterate([i + ":events" for i in a.args[2:]], step_size="200 MB"):
+            for arr in uproot.iterate([i + ":events" for i in a.args[1:]], step_size="200 MB"):
                 out = convert(arr, c, a.thr)
                 f["events"].extend(out) if "events" in f else f.__setitem__("events", out)

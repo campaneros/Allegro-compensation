@@ -13,12 +13,14 @@ No magnetic field. Anything leaving the module is counted and killed; the back f
 ## Run
     cmake -B build && cmake --build build
     ./build/sim run.mac pi_raw_1.root 1            # seed 1; edit particle / energies / events in run.mac
-    ./build/sim run_e.mac e_raw.root 1             # electrons (copy run.mac, /gps/particle e-) for the calibration
-    python ntuple.py calib calib.json e_raw.root
-    python ntuple.py make train.root calib.json pi_raw_[1-9].root
-    python ntuple.py make test.root  calib.json pi_raw_10.root
+    python ntuple.py make train.root pi_raw_[1-9].root
+    python ntuple.py make test.root  pi_raw_10.root
     python gnn.py train.root test.root pred.npy
     python compensation.py train.root test.root --gnn pred.npy -o plots
+
+Calibration: by default the per-layer sampling fractions of the full ALLEGRO simulation (FCC-config). To check
+that this module reproduces them: `./build/sim run_e.mac e_raw.root 1 && python ntuple.py calib calib.json e_raw.root`
+(prints both sets; `--calib calib.json` in `make` uses the module's own).
 
 4th argument of `sim`: mm of aluminium between the bath and the virtual detector (102.7 = back cryostat + solenoid).
 `PHYSLIST=FTFP_BERT ./build/sim ...` changes the physics list (default QGSP_BERT).
@@ -27,4 +29,4 @@ No magnetic field. Anything leaving the module is counted and killed; the back f
 - `Ebeam`: total energy of the generated particle. `Evd`: energy leaving through the back face
   (kinetic for baryons, total otherwise). `Etrue = Ebeam - Evd`. `Eside`: lateral + backward leakage.
 - `Rend`: radius where the primary ended (first inelastic interaction, or exit).
-- hits: LAr deposits per cell, calibrated per layer to the EM scale with electrons, threshold 3 MeV (`--thr`).
+- hits: LAr deposits per cell, calibrated per layer to the EM scale, threshold 3 MeV (`--thr`).
