@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(allegro_ecal_standalone CXX)
-find_package(Geant4 REQUIRED)
+find_package(Geant4 REQUIRED ui_all vis_all)
 foreach(exe sim test_xml)
   add_executable(${exe} ${exe}.cc)
   target_link_libraries(${exe} ${Geant4_LIBRARIES})

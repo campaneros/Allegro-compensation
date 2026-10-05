@@ -1,4 +1,4 @@
-// Standalone Geant4 simulation of a module (sector) of the ALLEGRO ECAL barrel in a test-beam setup:
+// Standalone Geant4 simulation of a module (a block of consecutive plates) of the ALLEGRO ECAL barrel in a test-beam setup:
 // a beam is fired radially into the module, everything leaving it is counted and killed;
 // the back surface is the "virtual detector" of arXiv:2606.05111. No magnetic field.
 // The geometry (dimensions, plate structure, materials, layers, readout segmentation) is read at start-up directly
@@ -6,12 +6,14 @@
 // detector/calorimeter/ECalBarrel_NobleLiquid_InclinedTrapezoids_o1_v03_geo.cpp does.
 //
 //   ./sim run.mac out.root [seed=1] [xmlDir=k4geo/FCCee/ALLEGRO/compact/ALLEGRO_o1_v03]
+//   ./sim -i [xmlDir]          interactive session with visualisation (runs vis.mac, output in vis.root)
 // Size of the simulated module: /module/... commands in the macro, before /run/initialize.
 // Physics list: env PHYSLIST (default QGSP_BERT, as in the paper).
 #include "allegro_xml.hh"
 #include <G4GenericMessenger.hh>
 #include <G4Box.hh>
-#include <G4Tubs.hh>
+#include <G4ExtrudedSolid.hh>
+#include <G4TwoVector.hh>
 #include <G4LogicalVolume.hh>
 #include <G4PVPlacement.hh>
 #include <G4NistManager.hh>
@@ -27,6 +29,8 @@
 #include <G4UserSteppingAction.hh>
 #include <G4AnalysisManager.hh>
 #include <G4UImanager.hh>
+#include <G4UIExecutive.hh>
+#include <G4VisExecutive.hh>
 #include <G4Event.hh>
 #include <G4Step.hh>
 #include <G4Track.hh>
@@ -45,7 +49,7 @@
 namespace {
 const AllegroXml* X;   // the k4geo description
 // simulated module (not from the xml), set with /module/... in the macro
-double halfPhiDeg = 30, halfZmm = 1500;   // sector half width in azimuth (180 = whole ring) and half length along z
+double halfPhiDeg = 20, halfZmm = 1500;   // half width in azimuth of the block of plates, half length along z
 bool cryoBack = false;                    // false: virtual detector right behind the liquid, as in the paper
 
 // derived quantities, filled in main() (mm, rad)
@@ -54,6 +58,7 @@ int nPlanes, nLay;
 std::vector<double> layEnd;            // cumulative layer lengths along the electrode
 std::vector<int> mergeTheta, mergeModule;
 G4LogicalVolume *bathLV, *worldLV;
+int modLo, modHi;   // first and last electrode of the module
 
 // signed distance of p from the plane of the plate starting at azimuth idx*dPhi, and position along that plate
 double dist(const G4ThreeVector& p, double idx) {
@@ -75,7 +80,7 @@ bool locate(const G4ThreeVector& p, int& mod, int& lay) {
   if (dist(p, i - 0.5) < 0) --i;
   else if (dist(p, i + 0.5) >= 0) ++i;
   s = along(p, i);
-  if (s < 0 || s > Lpl) return false;
+  if (s < 0 || s > Lpl || i < modLo || i > modHi) return false;
   for (lay = 0; lay < nLay - 1 && s > layEnd[lay];) ++lay;
   mod = ((i % nPlanes) + nPlanes) % nPlanes;
   return true;
@@ -104,27 +109,46 @@ class Det : public G4VUserDetectorConstruction {
   }
 public:
   Det() {
-    msg.DeclareProperty("halfPhiDeg", halfPhiDeg, "half width of the sector in azimuth [deg]; 180 = whole ring");
-    msg.DeclareProperty("halfZ", halfZmm, "half length of the sector along z [mm]");
+    msg.DeclareProperty("halfPhiDeg", halfPhiDeg, "half width in azimuth of the block of plates [deg]");
+    msg.DeclareProperty("halfZ", halfZmm, "half length of the module along z [mm]");
     msg.DeclareProperty("cryoBack", cryoBack, "keep the back cryostat wall in front of the virtual detector");
   }
   G4VPhysicalVolume* Construct() override {
-    double halfPhi = std::min(halfPhiDeg, 180.) * deg;
-    double dz = std::min(halfZmm, X->dz) * mm, cdz = dz;
+    double halfPhi = std::min(halfPhiDeg, 60.) * deg;
+    double dz = std::min(halfZmm, X->dz) * mm;
     double c1 = X->cryoRmin1, c2 = X->cryoRmin2, C1 = X->cryoRmax1, C2 = X->cryoRmax2;
     double tIn = X->tInner, tGlue = X->tGlue, tOut = X->tOuter, tRO = X->tReadout;
 
-    worldLV = new G4LogicalVolume(new G4Box("World", C2 + 1 * m, C2 + 1 * m, cdz + 1 * m),
+    worldLV = new G4LogicalVolume(new G4Box("World", C2 + 1 * m, C2 + 1 * m, dz + 1 * m),
                                   G4NistManager::Instance()->FindOrBuildMaterial("G4_Galactic"), "World");
     auto world = new G4PVPlacement(nullptr, {}, worldLV, "World", nullptr, false, 0);
-    auto tubs = [&](const char* n, double r0, double r1, double hz, G4Material* m) {
-      auto lv = new G4LogicalVolume(new G4Tubs(n, r0, r1, hz, -halfPhi, 2 * halfPhi), m, n);
+    // The module is a block of consecutive plates, like a supermodule: electrodes modLo..modHi with an absorber on
+    // each side. Its sides follow the inclined plates (planes of the "plates" modLo-1 and modHi+1), front and back
+    // are at constant radius. The block is shifted by half the azimuth swept by a plate, so that a radial beam at
+    // phi = 0 crosses its centre at mid depth.
+    double dMax = std::asin(Lpl * std::sin(alpha) / Rmax);
+    modLo = std::ceil((-halfPhi - dMax / 2) / dPhi);
+    modHi = std::floor((halfPhi - dMax / 2) / dPhi);
+    auto pt = [&](double idx, double r) {   // point at radius r on the (extended) plane of plate idx
+      double sp = -Rmin * std::cos(alpha) + std::sqrt(r * r - std::pow(Rmin * std::sin(alpha), 2)), ph = idx * dPhi;
+      return G4TwoVector(Rmin * std::cos(ph) + sp * std::cos(ph + alpha), Rmin * std::sin(ph) + sp * std::sin(ph + alpha));
+    };
+    auto arc = [&](std::vector<G4TwoVector>& v, double r, double ia, double ib) {   // chords of at most 3 deg
+      double pa = pt(ia, r).phi(), pb = pt(ib, r).phi();
+      int n = std::max(1, int(std::ceil(std::abs(pb - pa) / (3 * deg))));
+      for (int k = 0; k <= n; ++k) { double ph = pa + (pb - pa) * k / n; v.emplace_back(r * std::cos(ph), r * std::sin(ph)); }
+    };
+    auto band = [&](const char* n, double r0, double r1, G4Material* m) {   // radial slice r0..r1 of the module
+      std::vector<G4TwoVector> v;
+      arc(v, r1, modLo - 1., modHi + 1.);
+      arc(v, r0, modHi + 1., modLo - 1.);
+      auto lv = new G4LogicalVolume(new G4ExtrudedSolid(n, v, dz, G4TwoVector(), 1., G4TwoVector(), 1.), m, n);
       new G4PVPlacement(nullptr, {}, lv, n, worldLV, false, 0, true);
       return lv;
     };
-    tubs("CryoFront", c1, c2, cdz, mat("cryo"));
-    bathLV = tubs("Bath", c2, C1, dz, mat("active"));   // services + bath + gaps: all liquid
-    if (cryoBack) tubs("CryoBack", C1, C2, cdz, mat("cryo"));
+    band("CryoFront", c1, c2, mat("cryo"));
+    bathLV = band("Bath", c2, C1, mat("active"));   // services + bath + gaps: all liquid
+    if (cryoBack) band("CryoBack", C1, C2, mat("cryo"));
     Rback = cryoBack ? C2 : C1;
 
     // absorber: inner core (a different material in layer 0), glue and outer skin on both faces
@@ -140,18 +164,17 @@ public:
     auto roLV = box("Readout", tRO, Lpl, mat("readout"));
 
     // plates start at Rmin at azimuth phi and run for a length Lpl at an angle alpha to the radial direction
-    // keep only the plates fully inside the sector (a plate sweeps dMax in azimuth); the whole ring if halfPhi = 180 deg
-    double dMax = std::asin(Lpl * std::sin(alpha) / Rmax), margin = 0.3 * deg;
-    bool ring = halfPhi >= 180 * deg;
-    int i0 = ring ? 0 : std::ceil((-halfPhi + margin) / dPhi), i1 = ring ? nPlanes - 1 : std::floor((halfPhi - dMax - margin) / dPhi);
-    for (int i = i0; i <= i1; ++i)
-      for (int isAbs = 0; isAbs < 2; ++isAbs) {
-        double phi = (i + 0.5 * isAbs) * dPhi;
-        G4ThreeVector u(std::cos(phi + alpha), std::sin(phi + alpha), 0), z(0, 0, 1);
-        G4RotationMatrix rot(z.cross(u), z, u);   // local x = plate normal, y = barrel z, z = along plate
-        G4ThreeVector c = Rmin * G4ThreeVector(std::cos(phi), std::sin(phi), 0) + 0.5 * Lpl * u;
-        new G4PVPlacement(G4Transform3D(rot, c), isAbs ? absLV : roLV, isAbs ? "Outer" : "Readout", bathLV, false, i, i < i0 + 2);
-      }
+    auto place = [&](double idx, G4LogicalVolume* lv, const char* n, int copy) {
+      double phi = idx * dPhi;
+      G4ThreeVector u(std::cos(phi + alpha), std::sin(phi + alpha), 0), z(0, 0, 1);
+      G4RotationMatrix rot(z.cross(u), z, u);   // local x = plate normal, y = barrel z, z = along plate
+      G4ThreeVector c = Rmin * G4ThreeVector(std::cos(phi), std::sin(phi), 0) + 0.5 * Lpl * u;
+      new G4PVPlacement(G4Transform3D(rot, c), lv, n, bathLV, false, copy, copy < modLo + 2 || copy > modHi - 1);
+    };
+    for (int i = modLo; i <= modHi + 1; ++i) {   // electrode at i*dPhi, absorbers at (i -+ 1/2)*dPhi
+      place(i - 0.5, absLV, "Outer", i);
+      if (i <= modHi) place(i, roLV, "Readout", i);
+    }
     return world;
   }
 };
@@ -237,7 +260,7 @@ public:
       auto d = tr->GetDefinition();
       int b = d->GetBaryonNumber();   // baryons: kinetic energy; antibaryons: + annihilation; others: total energy
       double esc = b > 0 ? tr->GetKineticEnergy() : b < 0 ? tr->GetKineticEnergy() + 2 * d->GetPDGMass() : tr->GetTotalEnergy();
-      (post->GetPosition().perp() > Rback - 0.1 * mm ? ev.evd : ev.eside) += esc;
+      (post->GetPosition().perp() > Rback - 2 * mm ? ev.evd : ev.eside) += esc;   // back face = chords of the circle Rback
       tr->SetTrackStatus(fStopAndKill);
     }
     if (tr->GetTrackID() == 1 && tr->GetTrackStatus() != fAlive && ev.rend < 0) ev.rend = post->GetPosition().perp();
@@ -246,9 +269,12 @@ public:
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 3) { G4cerr << "usage: sim run.mac out.root [seed=1] [xmlDir]" << G4endl; return 1; }
-  G4Random::setTheSeed(argc > 3 ? std::atol(argv[3]) : 1);
-  X = new AllegroXml(argc > 4 ? argv[4] : "k4geo/FCCee/ALLEGRO/compact/ALLEGRO_o1_v03");
+  bool inter = argc > 1 && std::string(argv[1]) == "-i";
+  if (!inter && argc < 3) { G4cerr << "usage: sim run.mac out.root [seed=1] [xmlDir]\n       sim -i [xmlDir]" << G4endl; return 1; }
+  auto ui = inter ? new G4UIExecutive(argc, argv) : nullptr;
+  G4Random::setTheSeed(!inter && argc > 3 ? std::atol(argv[3]) : 1);
+  const char* xmlDir = inter ? (argc > 2 ? argv[2] : nullptr) : (argc > 4 ? argv[4] : nullptr);
+  X = new AllegroXml(xmlDir ? xmlDir : "k4geo/FCCee/ALLEGRO/compact/ALLEGRO_o1_v03");
   Rmin = X->rmin; Rmax = X->rmax; alpha = X->angle; nPlanes = X->nPlanes; dPhi = twopi / nPlanes;
   Lpl = -Rmin * std::cos(alpha) + std::sqrt(Rmax * Rmax - std::pow(Rmin * std::sin(alpha), 2));   // planeLength
   thGrid = X->thetaGrid; thOff = X->thetaOffset;
@@ -263,9 +289,17 @@ int main(int argc, char** argv) {
   rm->SetUserInitialization(G4PhysListFactory().GetReferencePhysList(pl ? pl : "QGSP_BERT"));
   rm->SetUserInitialization(new Det);
   rm->SetUserAction(new Gun);
-  rm->SetUserAction(new Run(argv[2]));
+  rm->SetUserAction(new Run(inter ? "vis.root" : argv[2]));
   rm->SetUserAction(new Evt);
   rm->SetUserAction(new Step);
-  G4UImanager::GetUIpointer()->ApplyCommand(G4String("/control/execute ") + argv[1]);
+  if (inter) {
+    G4VisExecutive vis;
+    vis.Initialize();
+    G4UImanager::GetUIpointer()->ApplyCommand("/control/execute vis.mac");
+    ui->SessionStart();
+    delete ui;
+  } else {
+    G4UImanager::GetUIpointer()->ApplyCommand(G4String("/control/execute ") + argv[1]);
+  }
   delete rm;
 }

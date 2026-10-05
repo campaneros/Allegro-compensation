@@ -41,10 +41,12 @@ class Net(nn.Module):
 if __name__ == "__main__":
     p = argparse.ArgumentParser(); p.add_argument("train"); p.add_argument("test"); p.add_argument("out")
     p.add_argument("--epochs", type=int, default=60); p.add_argument("--k", type=int, default=50)
-    p.add_argument("--nmax", type=int, default=256, help="keep the nmax most energetic hits"); a = p.parse_args()
+    p.add_argument("--nmax", type=int, default=256, help="keep the nmax most energetic hits")
+    p.add_argument("--patience", type=int, default=10, help="stop after this many epochs without validation improvement")
+    a = p.parse_args()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     x, m, y = load(a.train, a.nmax); nv = len(y) // 5                      # 20% validation
-    net = Net(a.k).to(dev); opt = torch.optim.Adam(net.parameters(), 1e-4); best = float("inf")
+    net = Net(a.k).to(dev); opt = torch.optim.Adam(net.parameters(), 1e-4); best, since = float("inf"), 0
     def run(x, m, y=None, train=False, bs=64):
         net.train(train); out, perm = [], torch.randperm(len(x)) if train else torch.arange(len(x))
         for i in range(0, len(x), bs):
@@ -56,7 +58,9 @@ if __name__ == "__main__":
         return torch.cat(out)
     for ep in range(a.epochs):
         run(x[nv:], m[nv:], y[nv:], train=True)
-        val = nn.functional.mse_loss(run(x[:nv], m[:nv]), y[:nv]).item(); print(f"epoch {ep} val mse {val:.5f}", flush=True)
-        if val < best: best = val; torch.save(net.state_dict(), a.out + ".pt")
+        val = nn.functional.mse_loss(run(x[:nv], m[:nv]), y[:nv]).item(); since += 1
+        print(f"epoch {ep} val mse {val:.5f}  (rms error on Etrue {SCALE * val**0.5:.2f} GeV)", flush=True)
+        if val < best: best, since = val, 0; torch.save(net.state_dict(), a.out + ".pt")
+        if since >= a.patience: print(f"no improvement for {a.patience} epochs, stopping"); break
     net.load_state_dict(torch.load(a.out + ".pt"))
     x, m, _ = load(a.test, a.nmax); np.save(a.out, run(x, m).numpy() * SCALE)

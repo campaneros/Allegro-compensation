@@ -12,8 +12,10 @@ A module of the ALLEGRO ECAL barrel. `sim` reads the k4geo compact files directl
     git clone https://github.com/key4hep/k4geo        # in this directory, or pass the xml directory as 4th argument
     ./build/test_xml k4geo/FCCee/ALLEGRO/compact/ALLEGRO_o1_v03    # prints what was read from the xml
 
-- Module = sector of the barrel, by default +-30 deg in azimuth (about +-1.2 m) and +-1.5 m along z, so that
-  lateral leakage is negligible: check it with `Eside`. `/module/halfPhiDeg`, `/module/halfZ` in the macro change it.
+- Module = a block of consecutive plates, like a supermodule: its sides follow the inclined plates, front and back
+  are at constant radius, every plate inside it is complete. Default: plates over +-20 deg in azimuth (171 electrodes,
+  about +-0.8 m around the beam at mid depth) and +-1.5 m along z. `/module/halfPhiDeg`, `/module/halfZ` in the macro
+  change it; `Eside` (energy leaving through the sides, the z ends or backwards) tells whether it is large enough.
 - Front cryostat wall and liquid bath; the virtual detector is right behind the liquid, as in the paper.
   `/module/cryoBack true` adds the back cryostat wall (which includes the solenoid thickness) in front of it.
 - No magnetic field, nothing outside the ECAL barrel.
@@ -37,8 +39,12 @@ that this module reproduces them: `./build/sim run_e.mac e_raw.root 1 && python 
 Each raw file carries the geometry used in a `geo` tree, which `ntuple.py` reads to place the cells.
 `PHYSLIST=FTFP_BERT ./build/sim ...` changes the physics list (default QGSP_BERT).
 
+## Looking at the detector
+`./build/sim -i` opens an interactive Geant4 session with visualisation (needs a Geant4 built with a graphics
+driver, e.g. Qt) and runs `vis.mac`: a thin slice of the module and one 10 GeV pion.
+
 ## Definitions
 - `Ebeam`: total energy of the generated particle. `Evd`: energy leaving through the back face
-  (kinetic for baryons, total otherwise). `Etrue = Ebeam - Evd`. `Eside`: energy leaving through the sides or backwards.
+  (kinetic for baryons, total otherwise). `Etrue = Ebeam - Evd`. `Eside`: energy leaving through the sides, the z ends or backwards.
 - `Rend`: radius where the primary ended (first inelastic interaction, or exit).
 - hits: LAr deposits per cell, calibrated per layer to the EM scale, threshold 3 MeV (`--thr`).

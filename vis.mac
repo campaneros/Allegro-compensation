@@ -1,0 +1,22 @@
+# ./build/sim -i     interactive session: draws the module and one 10 GeV pion; type /run/beamOn 1 for more
+# a narrower and much shorter module than in run.mac keeps the drawing light (only for looking at the geometry)
+/module/halfPhiDeg 15
+/module/halfZ 100
+/module/cryoBack false
+/run/initialize
+/vis/open
+/vis/drawVolume
+/vis/geometry/set/visibility World 0 false
+/vis/geometry/set/colour Bath 0 0.3 0.6 1 0.15
+/vis/geometry/set/colour Outer 0 0.4 0.4 0.4 1
+/vis/geometry/set/colour Readout 0 0.9 0.6 0.1 1
+/vis/geometry/set/colour CryoFront 0 0.7 0.7 0.7 0.5
+/vis/viewer/set/viewpointThetaPhi 0 0
+/vis/viewer/set/style surface
+/vis/scene/add/trajectories smooth
+/vis/scene/endOfEventAction accumulate
+/gps/particle pi-
+/gps/ene/mono 10 GeV
+/gps/position 2100 4.4 -10.7 mm
+/gps/direction 1 0 0
+/run/beamOn 1
