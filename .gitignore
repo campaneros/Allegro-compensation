@@ -4,3 +4,4 @@ build/
 plots*/
 __pycache__/
 calib.json
+k4geo/

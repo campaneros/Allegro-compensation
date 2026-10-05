@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""Figs. 4-12 of arXiv:2606.05111 on ALLEGRO ntuples (from ntuple.py).
-  python compensation.py train.root [test.root] [--gnn pred.npy] [-o plots]
-  python compensation.py --toy toy.root      # write a toy file to smoke-test the chain
-Corrections are derived on train.root and evaluated on test.root (same file if only one is given)."""
 import argparse, os, numpy as np, awkward as ak, uproot
 from scipy.optimize import curve_fit
 
@@ -55,6 +50,7 @@ def reso(y, d):
 
 def nsc(E, N, S, C): return np.sqrt((N / E)**2 + S**2 / E + C**2)
 def fit_nsc(x, r, e):
+    if len(x) < 4: return np.full(3, np.nan), np.full(3, np.nan)   # not enough energy bins for a 3-parameter fit
     p, cov = curve_fit(nsc, x, r, sigma=e, p0=[1, .5, .02], bounds=(0, np.inf), absolute_sigma=True)
     return p, np.sqrt(np.diag(cov))
 
@@ -73,11 +69,18 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(); p.add_argument("train", nargs="?"); p.add_argument("test", nargs="?")
     p.add_argument("--gnn", help="npy with GNN-predicted ECAL energy [GeV] for test.root (from gnn.py)")
     p.add_argument("--hcal", type=float, default=0.25, help="HCAL stochastic term"); p.add_argument("-o", default="plots")
+    p.add_argument("--ebin", type=float, default=5, help="width of the beam-energy bins [GeV]; widen it for small samples")
     p.add_argument("--toy"); a = p.parse_args()
+    EB = np.arange(5, 100 + a.ebin / 2, a.ebin)
     if a.toy: toy(a.toy); raise SystemExit
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     os.makedirs(a.o, exist_ok=True)
     tr = load(a.train); te = load(a.test) if a.test else tr
+    nbin = np.bincount(ebin(te)[(ebin(te) >= 0) & (ebin(te) < len(EB) - 1)], minlength=len(EB) - 1)
+    print(f"train {len(tr['Ebeam'])} events, test {len(te['Ebeam'])} events, {nbin.min()}-{nbin.max()} test events per {a.ebin:g} GeV bin")
+    if (nbin >= 100).sum() == 0:
+        raise SystemExit("No energy bin has the 100 test events needed for a resolution: simulate more events or widen the bins with --ebin")
+    if (nbin >= 100).sum() < 4: print("fewer than 4 usable energy bins: resolutions are plotted, the N/S/C fit is skipped")
     ecal = {"no correction": te["Ereco"]}
     for var, lab in (("rms", "RMS correction"), ("zcog", "Z correction")):
         ecal[lab] = apply_corr(te, var, fit_corr(tr, var))
@@ -103,10 +106,14 @@ if __name__ == "__main__":
     # Figs. 6 / 8 / 10 / 11 + Tables 1-2: combined resolution vs energy, N/S/C fit
     plt.figure(); xx = np.linspace(EB[0], EB[-1], 200)
     print(f"combined ECAL + {a.hcal:.0%}/sqrt(E) HCAL          N [GeV]        S [%]         C [%]")
+    table = {}
     for lab, E in ecal.items():
-        x, r, e = reso(E + hc, te); par, err = fit_nsc(x, r, e)
+        x, r, e = reso(E + hc, te); par, err = fit_nsc(x, r, e); table[lab] = r
         print(f"{lab:38s} {par[0]:.2f}+-{err[0]:.2f}   {100*par[1]:.1f}+-{100*err[1]:.1f}   {100*par[2]:.2f}+-{100*err[2]:.2f}")
         l = plt.errorbar(x, r, e, fmt="o", ms=3, label=f"{lab}: S = {100*par[1]:.1f}%"); plt.plot(xx, nsc(xx, *par), "--", c=l[0].get_color())
+    print("\nsigma68/E_beam [%] per energy bin (no fit involved):\n" + f"{'E_beam [GeV]':>16s}" + "".join(f"{v:8.1f}" for v in x))
+    for lab, r in table.items(): print(f"{lab:>16s}" + "".join(f"{100*v:8.2f}" for v in r))
+    print()
     plt.xlabel("E_beam [GeV]"); plt.ylabel("sigma68 / E_beam"); plt.ylim(0); plt.legend(); plt.savefig(f"{a.o}/resolution.png"); plt.close()
 
     # Fig. 12: ECAL contribution = combined (-) HCAL-only, for several HCAL stochastic terms
